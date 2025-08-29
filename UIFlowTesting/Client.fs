@@ -23,7 +23,7 @@ module Client =
         Form.Yield "B"
         |> Form.TransmitView
 
-    let RenderForm1 actions v (resv: View<_>) =
+    let RenderForm1 actions v resv =
         div [] [
             text "First input: "
             Doc.InputType.Text [] v
@@ -31,7 +31,7 @@ module Client =
             Doc.Button "Cancel" [] actions.Cancel
         ]
 
-    let RenderForm2 actions v (resv: View<_>) =
+    let RenderForm2 actions v resv =
         div [] [
             text "Second input: "
             Doc.InputType.Text [] v
