@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36310.24 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "UIFlowTesting", "UIFlowTesting\UIFlowTesting.fsproj", "{B005409D-0D24-4F3F-917B-E4666FF29DEB}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B005409D-0D24-4F3F-917B-E4666FF29DEB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B005409D-0D24-4F3F-917B-E4666FF29DEB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B005409D-0D24-4F3F-917B-E4666FF29DEB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B005409D-0D24-4F3F-917B-E4666FF29DEB}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {76510558-D28E-4CF8-8613-8C111778D47D}
+	EndGlobalSection
+EndGlobal
