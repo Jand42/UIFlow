@@ -1,26 +1,34 @@
 ﻿namespace UIFlowTesting
 
+open System
 open WebSharper
 open WebSharper.UI
 open WebSharper.UI.Client
 
 type FlowActions<'A> =
     {
-        Back: unit -> unit
-        Cancel: unit -> unit
-        Next: View<'A> -> unit
+        back: unit -> unit
+        cancel: unit -> unit
+        next: View<'A> -> unit
     }
+    [<Inline>] member this.Back() = this.back()
+    [<Inline>] member this.Cancel() = this.cancel()
+    [<Inline>] member this.Next v = this.next v
 
 type CancelledFlowActions =
     {
-        Restart: unit -> unit
+        restart: unit -> unit
     }
+    [<Inline>] member this.Restart() = this.restart()
 
 [<JavaScript>]
 [<Sealed>]
 type Flow<'A>(render: Var<Doc> -> FlowActions<'A> -> unit) =
         
-    member this.Render = render
+    new (define: Func<FlowActions<'A>, Doc>) =
+        Flow(fun var actions -> var.Set (define.Invoke actions))
+
+    [<Inline>] member this.Render = render
 
 [<JavaScript>]
 type Flow =
@@ -29,29 +37,28 @@ type Flow =
         Flow(fun var actions -> 
             let mappedActions =
                 {
-                    Back = actions.Back
-                    Cancel = actions.Cancel
-                    Next = fun x -> actions.Next (View.Map f x)
+                    back = actions.Back
+                    cancel = actions.Cancel
+                    next = fun x -> actions.Next (View.Map f x)
                 }
             x.Render var mappedActions
         )
 
     static member Bind (m: Flow<'A>) (k: View<'A> -> Flow<'B>) =
-            
         Flow(fun var combinedActions ->
             let next = ref None
             let outerActions =
                 {
-                    Back = combinedActions.Back
-                    Cancel = combinedActions.Cancel
-                    Next = fun resView ->
+                    back = combinedActions.Back
+                    cancel = combinedActions.Cancel
+                    next = fun resView ->
                         match next.Value with
                         | Some existing -> var.Set existing
                         | _ ->
                             let current = var.Value
                             let innerActions = 
                                 { combinedActions with
-                                    Back = fun () -> var.Set current
+                                    back = fun () -> var.Set current
                                 }
                             (k resView).Render var innerActions
                             next.Value <- Some var.Value
@@ -66,9 +73,9 @@ type Flow =
         let var = Var.Create Doc.Empty
         let action =
             {
-                Back = ignore
-                Next = ignore
-                Cancel = ignore
+                back = ignore
+                next = ignore
+                cancel = ignore
             }
         fl.Render var action
         Doc.EmbedView var.View 
@@ -78,13 +85,13 @@ type Flow =
         let mutable action = Unchecked.defaultof<FlowActions<'A>>
         let cancelledAction =
             {
-                Restart = fun () -> fl.Render var action
+                restart = fun () -> fl.Render var action
             }
         action <-
             {
-                Back = ignore
-                Next = ignore
-                Cancel = fun () -> var.Set (cancel cancelledAction)
+                back = ignore
+                next = ignore
+                cancel = fun () -> var.Set (cancel cancelledAction)
             }
         fl.Render var action
         Doc.EmbedView var.View 
@@ -98,12 +105,32 @@ type Flow =
 [<JavaScript>]
 [<Sealed>]
 type FlowBuilder() =
-    member x.Bind(comp, func) = Flow.Bind comp func
-    member x.Return(value) = Flow.Return value
-    member x.ReturnFrom(inner: Flow<'A>) = inner
+    [<Inline>] member x.Bind(comp, func) = Flow.Bind comp func
+    [<Inline>] member x.Return(value) = Flow.Return value
+    [<Inline>] member x.ReturnFrom(inner: Flow<'A>) = inner
 
 [<JavaScript>]
 [<AutoOpen>]
 module FlowHelper =
     let flow = FlowBuilder()
 
+open System.Runtime.CompilerServices
+
+[<Extension; Sealed; JavaScript>]
+type FlowExtensions =
+
+    [<Extension; Inline>]
+    static member Map(flow: Flow<'A>, f: Func<'A, 'B>) =
+        Flow.Map f.Invoke flow
+
+    [<Extension; Inline>]
+    static member Bind(flow: Flow<'A>, f: Func<View<'A>, Flow<'B>>) =
+        Flow.Bind flow f.Invoke
+
+    [<Extension; Inline>]
+    static member Embed(flow) =
+        Flow.Embed flow
+
+    [<Extension; Inline>]
+    static member EmbedWithCancel(flow, cancel: Func<CancelledFlowActions, Doc>) =
+        Flow.Embed flow
