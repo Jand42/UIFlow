@@ -7,6 +7,7 @@ open WebSharper.UI.Client
 open WebSharper.UI.Templating
 open WebSharper.UI.Html
 open WebSharper.Forms
+open WebSharper.Sitelets
 
 open UIFlowTesting // shadowing for Flow
 
@@ -23,7 +24,7 @@ module Client =
         Form.Yield "B"
         |> Form.TransmitView
 
-    let RenderForm1 actions v resv =
+    let RenderForm1 (actions: FlowActions<_>) v resv =
         div [] [
             text "First input: "
             Doc.InputType.Text [] v
@@ -31,7 +32,7 @@ module Client =
             Doc.Button "Cancel" [] actions.Cancel
         ]
 
-    let RenderForm2 actions v resv =
+    let RenderForm2 (actions: FlowActions<_>) v resv =
         div [] [
             text "Second input: "
             Doc.InputType.Text [] v
@@ -53,7 +54,7 @@ module Client =
         )
 
     let ResultFlow (x: View<Result<string>>) (y: View<Result<string>>) =
-        Flow.Static (
+        Flow.End (
             div [] [
                 text $"""First: {match x.V with Success o -> o | _ -> ""} Second: {match y.V with Success o -> o | _ -> ""}"""    
             ]
@@ -66,16 +67,42 @@ module Client =
             return! ResultFlow x y
         }
 
-    let Cancelled actions =
+    let Cancelled (actions: CancelledFlowActions) =
         div [] [
             text "Canceled"
             Doc.Button "Restart" [] actions.Restart
         ]    
 
+    type EndPoint =
+        | Home
+        | Form of int
+
     [<SPAEntryPoint>]
     let Main () =
-        div [] [ 
-            CombinedFlow()
-            |> Flow.EmbedWithCancel Cancelled
-        ]
+        let router = Router.Infer<EndPoint>()
+        
+        let currentRoute =
+            router 
+            |> Router.InstallHash Home
+
+        let formPageCached =
+            lazy
+                let flowVar = 
+                    currentRoute.Lens (function Home -> 0 | Form i -> i) (fun ep i -> match ep with Form _ -> Form i | _ -> ep)
+                div [] [ 
+                    CombinedFlow()
+                    |> Flow.EmbedWithRoutingAndCancel flowVar Cancelled
+                    p [] [ a [ attr.href (router.HashLink Home) ] [ text "Go to home"] ]
+                ]
+
+        currentRoute.View.Doc (fun route ->
+            match route with
+            | Home ->
+                div [] [
+                    text "Hello"
+                    p [] [ a [ attr.href (router.HashLink (Form 1)) ] [ text "Go to form"] ]
+                ]
+            | Form _ ->
+                formPageCached.Value
+        )
         |> Doc.RunById "main"

@@ -15,6 +15,60 @@ type FlowActions<'A> =
     [<Inline>] member this.Cancel() = this.cancel()
     [<Inline>] member this.Next v = this.next v
 
+[<JavaScript>]
+type FlowState =
+    {
+        Index: Var<int>
+        Pages: ResizeArray<Doc>
+        mutable EndedOn: int option
+        RenderFirst: unit -> unit
+    }
+
+    member this.Add(page) =
+        this.Index.Update(fun i -> 
+            this.Pages.Add(page)
+            i + 1
+        )
+
+    member this.Cancel(page) =
+        this.Index.Update(fun _ ->
+            this.Pages.Clear()
+            this.Pages.Add(page)
+            0
+        )
+
+    member this.End(page) =
+        this.Add(page)
+        let endIndex = this.Pages.Count - 1
+        for i = 0 to endIndex - 1 do
+            this.Pages[i] <- Doc.Empty
+        this.EndedOn <- Some endIndex
+
+    member this.Embed() =
+        this.Index.View.Map(fun i ->
+            JavaScript.Console.Log("Flow embed page", i)
+            let reset() =
+                this.EndedOn <- None
+                this.Pages.Clear()
+                this.Pages.Add(Doc.Empty)
+                this.Index.Set(0)
+                this.RenderFirst()
+                Doc.Empty
+            // if navigated away from ending page, reset
+            match this.EndedOn with 
+            | Some e when e <> i -> reset()
+            | _ ->
+                // check if st.Pages contains index i
+                if this.Pages.Count >= i + 1 then
+                    this.Pages[i]
+                elif this.Pages.Count > 1 then
+                    // show last rendered page instead
+                    this.Pages[i]       
+                else
+                    reset()
+        )
+        |> Doc.EmbedView
+
 type CancelledFlowActions =
     {
         restart: unit -> unit
@@ -23,10 +77,10 @@ type CancelledFlowActions =
 
 [<JavaScript>]
 [<Sealed>]
-type Flow<'A>(render: Var<Doc> -> FlowActions<'A> -> unit) =
+type Flow<'A>(render: FlowState -> FlowActions<'A> -> unit) =
         
     new (define: Func<FlowActions<'A>, Doc>) =
-        Flow(fun var actions -> var.Set (define.Invoke actions))
+        Flow(fun st actions -> st.Add (define.Invoke actions))
 
     [<Inline>] member this.Render = render
 
@@ -34,73 +88,92 @@ type Flow<'A>(render: Var<Doc> -> FlowActions<'A> -> unit) =
 type Flow =
 
     static member Map (f: 'A -> 'B) (x: Flow<'A>) =
-        Flow(fun var actions -> 
+        Flow(fun st actions -> 
             let mappedActions =
                 {
                     back = actions.Back
                     cancel = actions.Cancel
                     next = fun x -> actions.Next (View.Map f x)
                 }
-            x.Render var mappedActions
+            x.Render st mappedActions
         )
 
     static member Bind (m: Flow<'A>) (k: View<'A> -> Flow<'B>) =
-        Flow(fun var combinedActions ->
-            let next = ref None
+        Flow(fun st actions ->
             let outerActions =
                 {
-                    back = combinedActions.Back
-                    cancel = combinedActions.Cancel
+                    back = actions.Back
+                    cancel = actions.Cancel
                     next = fun resView ->
-                        match next.Value with
-                        | Some existing -> var.Set existing
-                        | _ ->
-                            let current = var.Value
-                            let innerActions = 
-                                { combinedActions with
-                                    back = fun () -> var.Set current
-                                }
-                            (k resView).Render var innerActions
-                            next.Value <- Some var.Value
+                        let i = st.Index.Value
+                        // check if st.Pages does not contain index i + 1
+                        if st.Pages.Count < i + 2 then
+                            (k resView).Render st actions
+                        st.Index.Set(i + 1)
                 }
-            m.Render var outerActions    
+            m.Render st outerActions    
         )
 
     static member Return x =
-        Flow(fun var actions -> actions.Next x)
+        Flow(fun st actions -> actions.Next x)
 
-    static member Embed (fl: Flow<'A>) =
-        let var = Var.Create Doc.Empty
+    static member EmbedWithRouting (var: Var<int>) (fl: Flow<'A>) =
+        let mutable renderFirst = ignore
+        let st =
+            {
+                Index = var
+                Pages = ResizeArray [ Doc.Empty ]
+                EndedOn = None
+                RenderFirst = fun () -> renderFirst ()
+            }
         let action =
             {
-                back = ignore
+                back = fun () -> st.Index.Update(fun i -> if i > 1 then i - 1 else i)
                 next = ignore
                 cancel = ignore
             }
-        fl.Render var action
-        Doc.EmbedView var.View 
+        renderFirst <- fun () -> fl.Render st action
+        var.Set 0
+        st.RenderFirst()
+        st.Embed()
 
-    static member EmbedWithCancel (cancel: CancelledFlowActions -> Doc) (fl: Flow<'A>) =
-        let var = Var.Create Doc.Empty
+    static member EmbedWithRoutingAndCancel (var: Var<int>) (cancel: CancelledFlowActions -> Doc) (fl: Flow<'A>) =
+        let mutable renderFirst = ignore
+        let st =
+            {
+                Index = var
+                Pages = ResizeArray [ Doc.Empty ]
+                EndedOn = None
+                RenderFirst = fun () -> renderFirst ()
+            }
         let mutable action = Unchecked.defaultof<FlowActions<'A>>
         let cancelledAction =
             {
-                restart = fun () -> fl.Render var action
+                restart = fun () -> fl.Render st action
             }
         action <-
             {
-                back = ignore
+                back = fun () -> st.Index.Update(fun i -> if i > 1 then i - 1 else i)
                 next = ignore
-                cancel = fun () -> var.Set (cancel cancelledAction)
+                cancel = fun () -> st.Cancel (cancel cancelledAction)
             }
-        fl.Render var action
-        Doc.EmbedView var.View 
+        renderFirst <- fun () -> fl.Render st action
+        var.Set 0
+        st.RenderFirst()
+        st.Embed()
 
+    static member Embed (fl: Flow<'A>) =
+        Flow.EmbedWithRouting (Var.Create 0) fl        
+
+    static member EmbedWithCancel (cancel: CancelledFlowActions -> Doc) (fl: Flow<'A>) =
+        Flow.EmbedWithRoutingAndCancel (Var.Create 0) cancel fl        
+
+    [<Inline>]
     static member Define (f: FlowActions<'A> -> Doc) =
-        Flow(fun var actions -> var.Set (f actions))
+        Flow(f)
 
-    static member Static doc =
-        Flow(fun var actions -> var.Set doc; actions.Next (View.Const ()))
+    static member End doc =
+        Flow(fun st actions -> st.End doc)
 
 [<JavaScript>]
 [<Sealed>]
