@@ -75,7 +75,7 @@ module Client =
 
     type EndPoint =
         | Home
-        | Form of int
+        | Form
 
     [<SPAEntryPoint>]
     let Main () =
@@ -85,24 +85,52 @@ module Client =
             router 
             |> Router.InstallHash Home
 
-        let formPageCached =
-            lazy
-                let flowVar = 
-                    currentRoute.Lens (function Home -> 0 | Form i -> i) (fun ep i -> match ep with Form _ -> Form i | _ -> ep)
-                div [] [ 
-                    CombinedFlow()
-                    |> Flow.EmbedWithRoutingAndCancel flowVar Cancelled
-                    p [] [ a [ attr.href (router.HashLink Home) ] [ text "Go to home"] ]
-                ]
-
         currentRoute.View.Doc (fun route ->
             match route with
             | Home ->
                 div [] [
                     text "Hello"
-                    p [] [ a [ attr.href (router.HashLink (Form 1)) ] [ text "Go to form"] ]
+                    p [] [ a [ attr.href (router.HashLink Form) ] [ text "Go to form"] ]
                 ]
-            | Form _ ->
-                formPageCached.Value
+            | Form ->
+                div [] [ 
+                    CombinedFlow()
+                    |> Flow.EmbedWithCancel Cancelled
+                    p [] [ a [ attr.href (router.HashLink Home) ] [ text "Go to home"] ]
+                ]
         )
         |> Doc.RunById "main"
+
+    //type EndPoint =
+    //    | Home
+    //    | Form of int
+
+    //[<SPAEntryPoint>]
+    //let Main () =
+    //    let router = Router.Infer<EndPoint>()
+        
+    //    let currentRoute =
+    //        router 
+    //        |> Router.InstallHash Home
+
+    //    let formPageCached =
+    //        lazy
+    //            let flowVar = 
+    //                currentRoute.Lens (function Home -> 0 | Form i -> i) (fun ep i -> match ep with Form _ -> Form i | _ -> ep)
+    //            div [] [ 
+    //                CombinedFlow()
+    //                |> Flow.EmbedWithRoutingAndCancel flowVar Cancelled
+    //                p [] [ a [ attr.href (router.HashLink Home) ] [ text "Go to home"] ]
+    //            ]
+
+    //    currentRoute.View.Doc (fun route ->
+    //        match route with
+    //        | Home ->
+    //            div [] [
+    //                text "Hello"
+    //                p [] [ a [ attr.href (router.HashLink (Form 1)) ] [ text "Go to form"] ]
+    //            ]
+    //        | Form _ ->
+    //            formPageCached.Value
+    //    )
+    //    |> Doc.RunById "main"
