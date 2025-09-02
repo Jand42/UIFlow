@@ -20,11 +20,13 @@ type FlowActions<'A> =
 module FlowRouting =
     let flowVars = ResizeArray<Var<int>>()
 
-    let install var =
+    let uniqueName = "WSUIFlow" + (As<string> DateTime.Now)
+    
+    let install (var: Var<int>) =
         if flowVars.Count = 0 then
             let handlePopState (e: Dom.Event) =
                 let (n, v, i) = e?state
-                if n = "WSUIFlow" then
+                if n = uniqueName then
                     flowVars[v].Set i
             JS.Window.AddEventListener("popstate", handlePopState, false)
         flowVars.Add(var)
@@ -42,7 +44,7 @@ type FlowState =
     member this.UpdatePage f =
         let v = FlowRouting.flowVars[this.Index]   
         v.Update f
-        let st = ("WSUIFlow", this.Index, v.Value)
+        let st = (FlowRouting.uniqueName, this.Index, v.Value)
         JS.Window.History.PushState(st, "")
 
     member this.Add(page) =
@@ -68,7 +70,6 @@ type FlowState =
     member this.Embed() =
         let v = FlowRouting.flowVars[this.Index]
         v.View.Map(fun i ->
-            JavaScript.Console.Log("Flow embed page", i)
             let reset() =
                 this.EndedOn <- None
                 this.Pages.Clear()
@@ -76,9 +77,9 @@ type FlowState =
                 this.UpdatePage(fun _ -> 0)
                 this.RenderFirst()
                 Doc.Empty
-            // if navigated away from ending page, reset
+            // do not navigate away from ending page
             match this.EndedOn with 
-            | Some e when e <> i -> reset()
+            | Some e -> this.Pages[e] 
             | _ ->
                 // check if st.Pages contains index i
                 if this.Pages.Count >= i + 1 then
@@ -107,6 +108,7 @@ type Flow<'A>(render: FlowState -> FlowActions<'A> -> unit) =
     [<Inline>] member this.Render = render
 
 [<JavaScript>]
+[<Sealed>]
 type Flow =
 
     static member Map (f: 'A -> 'B) (x: Flow<'A>) =
@@ -236,7 +238,7 @@ type Flow =
     static member Define (f: FlowActions<'A> -> Doc) =
         Flow(f)
 
-    static member End doc =
+    static member End doc : Flow<unit> =
         Flow(fun st actions -> st.End doc)
 
 [<JavaScript>]
