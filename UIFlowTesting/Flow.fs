@@ -22,14 +22,30 @@ module FlowRouting =
 
     let uniqueName = "WSUIFlow" + (As<string> DateTime.Now)
     
+    let markState() =
+        let mutable st = JS.Window.History.State
+        if st = null || JS.TypeOf st <> JS.Kind.Object then 
+            st <- New []
+        st?(uniqueName) <- flowVars |> Seq.map (fun var -> var.Value) |> Array.ofSeq
+        JS.Window.History.ReplaceState(st, "")
+
     let install (var: Var<int>) =
         if flowVars.Count = 0 then
             let handlePopState (e: Dom.Event) =
-                let (n, v, i) = e?state
-                if n = uniqueName then
-                    flowVars[v].Set i
+                let st = e?state
+                let flowSt =
+                    if st <> null && JS.TypeOf st = JS.Kind.Object then
+                        st?(uniqueName)
+                    else
+                        [||] : int[]
+                flowSt |> Array.iteri (fun i p ->
+                    let varI = flowVars[i] 
+                    if varI.Value <> p then
+                        varI.Set p
+                )
             JS.Window.AddEventListener("popstate", handlePopState, false)
         flowVars.Add(var)
+        markState()
         flowVars.Count - 1
 
 [<JavaScript>]
@@ -38,14 +54,24 @@ type FlowState =
         Index: int
         Pages: ResizeArray<Doc>
         mutable EndedOn: int option
+        mutable FirstRender: bool
         RenderFirst: unit -> unit
     }
+
+    member this.CurrentPage =
+        let v = FlowRouting.flowVars[this.Index]   
+        v.Value
 
     member this.UpdatePage f =
         let v = FlowRouting.flowVars[this.Index]   
         v.Update f
-        let st = (FlowRouting.uniqueName, this.Index, v.Value)
-        JS.Window.History.PushState(st, "")
+        let i = v.Value
+        if not this.FirstRender then
+            Console.Log("PushState")
+            JS.Window.History.PushState(New [], "")
+            FlowRouting.markState()
+        else
+            this.FirstRender <- false
 
     member this.Add(page) =
         this.UpdatePage(fun i -> 
@@ -57,6 +83,7 @@ type FlowState =
         this.UpdatePage(fun _ ->
             this.Pages.Clear()
             this.Pages.Add(page)
+            this.EndedOn <- Some 0
             0
         )
 
@@ -129,12 +156,13 @@ type Flow =
                     back = actions.Back
                     cancel = actions.Cancel
                     next = fun resView ->
-                        st.UpdatePage (fun i ->
-                            // check if st.Pages does not contain index i + 1
-                            if st.Pages.Count < i + 2 then
-                                (k resView).Render st actions
-                            i + 1                       
-                        )
+                        // check if st.Pages does not contain index i + 1
+                        if st.Pages.Count <= st.CurrentPage + 1 then
+                            (k resView).Render st actions
+                        else
+                            st.UpdatePage (fun i ->
+                                i + 1                       
+                            )
                 }
             m.Render st outerActions    
         )
@@ -195,6 +223,7 @@ type Flow =
                 Index = FlowRouting.install var
                 Pages = ResizeArray [ Doc.Empty ]
                 EndedOn = None
+                FirstRender = true
                 RenderFirst = fun () -> renderFirst ()
             }
         let action =
@@ -216,12 +245,16 @@ type Flow =
                 Index = FlowRouting.install var
                 Pages = ResizeArray [ Doc.Empty ]
                 EndedOn = None
+                FirstRender = true
                 RenderFirst = fun () -> renderFirst ()
             }
         let mutable action = Unchecked.defaultof<FlowActions<'A>>
         let cancelledAction =
             {
-                restart = fun () -> fl.Render st action
+                restart = 
+                    fun () -> 
+                        st.EndedOn <- None
+                        fl.Render st action
             }
         action <-
             {
@@ -272,4 +305,4 @@ type FlowExtensions =
 
     [<Extension; Inline>]
     static member EmbedWithCancel(flow, cancel: Func<CancelledFlowActions, Doc>) =
-        Flow.Embed flow
+        Flow.EmbedWithCancel cancel.Invoke flow
