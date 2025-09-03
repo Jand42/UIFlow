@@ -20,33 +20,61 @@ type FlowActions<'A> =
 module FlowRouting =
     let flowVars = ResizeArray<Var<int>>()
 
-    let uniqueName = "WSUIFlow" + (As<string> DateTime.Now)
+    let flowStateName = "WSUIFlow" + (As<string> DateTime.Now)
+    let flowPrevStateName = flowStateName + "Prev"
     
     let markState() =
         let mutable st = JS.Window.History.State
         if st = null || JS.TypeOf st <> JS.Kind.Object then 
             st <- New []
-        st?(uniqueName) <- flowVars |> Seq.map (fun var -> var.Value) |> Array.ofSeq
+        st?(flowStateName) <- flowVars |> Seq.map (fun var -> var.Value) |> Array.ofSeq
+        Console.Log("Marked", st)
         JS.Window.History.ReplaceState(st, "")
 
     let install (var: Var<int>) =
         if flowVars.Count = 0 then
             let handlePopState (e: Dom.Event) =
                 let st = e?state
+                Console.Log("Popped", st)
                 let flowSt =
                     if st <> null && JS.TypeOf st = JS.Kind.Object then
-                        st?(uniqueName)
+                        st?(flowStateName)
                     else
                         [||] : int[]
-                flowSt |> Array.iteri (fun i p ->
-                    let varI = flowVars[i] 
-                    if varI.Value <> p then
-                        varI.Set p
-                )
+                if flowSt <> JS.Undefined then
+                    flowSt |> Array.iteri (fun i p ->
+                        let varI = flowVars[i] 
+                        if varI.Value <> p then
+                            varI.Set p
+                    )
             JS.Window.AddEventListener("popstate", handlePopState, false)
         flowVars.Add(var)
-        markState()
         flowVars.Count - 1
+
+    let markPrev (index: int) =
+        let mutable st = JS.Window.History.State
+        if st = null || JS.TypeOf st <> JS.Kind.Object then 
+            st <- New []
+        st?(flowPrevStateName) <- index
+        JS.Window.History.ReplaceState(st, "")
+
+    let tryBack (index: int) =
+        let mutable st = JS.Window.History.State
+        let indexSt =
+            if st <> null && JS.TypeOf st = JS.Kind.Object then
+                let prevSt = st?(flowPrevStateName)
+                if prevSt <> JS.Undefined then
+                    As<int> prevSt
+                else
+                    -1
+            else
+                -1
+        if index = indexSt then
+            Console.Log "Calling history.back"
+            JS.Window.History.Back()
+            true
+        else
+            false
 
 [<JavaScript>]
 type FlowState =
@@ -65,7 +93,6 @@ type FlowState =
     member this.UpdatePage f =
         let v = FlowRouting.flowVars[this.Index]   
         v.Update f
-        let i = v.Value
         if not this.FirstRender then
             Console.Log("PushState")
             JS.Window.History.PushState(New [], "")
@@ -163,6 +190,8 @@ type Flow =
                             st.UpdatePage (fun i ->
                                 i + 1                       
                             )
+                        FlowRouting.markState()
+                        FlowRouting.markPrev st.Index
                 }
             m.Render st outerActions    
         )
@@ -228,11 +257,17 @@ type Flow =
             }
         let action =
             {
-                back = fun () -> st.UpdatePage(fun i -> if i > 1 then i - 1 else i)
+                back =
+                    fun () -> 
+                        if not (FlowRouting.tryBack st.Index) then
+                            st.UpdatePage(fun i -> if i > 1 then i - 1 else i)
                 next = ignore
                 cancel = ignore
             }
-        renderFirst <- fun () -> fl.Render st action
+        renderFirst <- 
+            fun () -> 
+                fl.Render st action
+                FlowRouting.markState()
         var.Set 0
         st.RenderFirst()
         st.Embed()
@@ -258,11 +293,17 @@ type Flow =
             }
         action <-
             {
-                back = fun () -> st.UpdatePage(fun i -> if i > 1 then i - 1 else i)
+                back =
+                    fun () -> 
+                        if not (FlowRouting.tryBack st.Index) then
+                            st.UpdatePage(fun i -> if i > 1 then i - 1 else i)
                 next = ignore
                 cancel = fun () -> st.Cancel (cancel cancelledAction)
             }
-        renderFirst <- fun () -> fl.Render st action
+        renderFirst <- 
+            fun () -> 
+                fl.Render st action
+                FlowRouting.markState()
         var.Set 0
         st.RenderFirst()
         st.Embed()

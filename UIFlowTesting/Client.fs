@@ -94,6 +94,10 @@ module Client =
                 ]
             | Form ->
                 div [] [ 
+                    p [] [ text "Form 1" ]
+                    CombinedFlow()
+                    |> Flow.EmbedWithCancel Cancelled
+                    p [] [ text "Form 2" ]
                     CombinedFlow()
                     |> Flow.EmbedWithCancel Cancelled
                     p [] [ a [ attr.href (router.HashLink Home) ] [ text "Go to home"] ]
