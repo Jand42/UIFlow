@@ -124,13 +124,6 @@ type FlowState =
     member this.Embed() =
         let v = FlowRouting.flowVars[this.Index]
         v.View.Map(fun i ->
-            let reset() =
-                this.EndedOn <- None
-                this.Pages.Clear()
-                this.Pages.Add(Doc.Empty)
-                this.UpdatePage(fun _ -> 0)
-                this.RenderFirst()
-                Doc.Empty
             // do not navigate away from ending page
             match this.EndedOn with 
             | Some e -> this.Pages[e] 
@@ -139,10 +132,16 @@ type FlowState =
                 if this.Pages.Count >= i + 1 then
                     this.Pages[i]
                 elif this.Pages.Count > 1 then
-                    // show last rendered page instead
-                    this.Pages[i]       
+                    // move to last rendered page instead
+                    this.UpdatePage(fun _ -> this.Pages.Count - 1)
+                    Doc.Empty   
                 else
-                    reset()
+                    this.EndedOn <- None
+                    this.Pages.Clear()
+                    this.Pages.Add(Doc.Empty)
+                    this.UpdatePage(fun _ -> 0)
+                    this.RenderFirst()
+                    Doc.Empty
         )
         |> Doc.EmbedView
 
@@ -190,7 +189,6 @@ type Flow =
                             st.UpdatePage (fun i ->
                                 i + 1                       
                             )
-                        FlowRouting.markState()
                         FlowRouting.markPrev st.Index
                 }
             m.Render st outerActions    
