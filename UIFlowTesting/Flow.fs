@@ -141,6 +141,19 @@ type FlowState =
             0
         )
 
+    member this.Restart() =
+        this.Pages.Clear()
+        this.Pages.Add(FlowPage.Create Doc.Empty)
+        this.EndedOn <- None
+        this.RenderFirst()
+
+    member this.End(page) =
+        this.Add(FlowPage.Create page)
+        let endIndex = this.Pages.Count - 1
+        for i = 0 to endIndex - 1 do
+            this.Pages[i] <- FlowPage.Create Doc.Empty
+        this.EndedOn <- Some endIndex
+
     member this.Navigator =
         {
             Get = fun () -> this.Index.Value
@@ -158,13 +171,6 @@ type FlowState =
                         goNext curI 
                         this.Index.Set final
         }
-
-    member this.End(page) =
-        this.Add(FlowPage.Create page)
-        let endIndex = this.Pages.Count - 1
-        for i = 0 to endIndex - 1 do
-            this.Pages[i] <- FlowPage.Create Doc.Empty
-        this.EndedOn <- Some endIndex
 
     member this.Embed() =
         this.Index.View.Map(fun i ->
@@ -407,8 +413,14 @@ type Flow =
     static member End doc : Flow<unit> =
         Flow(fun st _ -> st.End doc)
 
-    //static member EndRestartable (f: EndedFlowActions -> Doc) : Flow<unit> =
-    //    Flow(fun st _ -> st.End doc)
+    static member EndRestartable (f: EndedFlowActions -> Doc) : Flow<unit> =
+        Flow(fun st _ -> 
+            let action =
+                {
+                    restart = st.Restart
+                }
+            st.End (f action)
+        )
 
 [<JavaScript>]
 [<Sealed>]

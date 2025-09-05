@@ -102,6 +102,10 @@ type Flow =
     /// There is no more navigation from here, the flow must be re-rendered to restart.
     static member End : Doc -> Flow<unit>
 
+    /// Creates a flow from a static document that serves as the last page.
+    /// There is a restart action available.
+    static member EndRestartable : (EndedFlowActions -> Doc) -> Flow<unit>
+
 [<AutoOpen>]
 module FlowHelper =
     /// Computation expression for building flows.
