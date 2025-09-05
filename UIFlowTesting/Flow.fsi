@@ -32,11 +32,11 @@ type FlowActions<'A> =
     /// Go to the cancelled page of the flow if it exists.
     member Cancel : unit -> unit
     /// Go back to the next page of the flow.
-    member Next : View<'A> -> unit
+    member Next : 'A -> unit
 
 [<Sealed>]
 [<Class>]
-type CancelledFlowActions =
+type EndedFlowActions =
     /// Restart the flow from the first page re-rendered.
     member Restart : unit -> unit
 
@@ -49,8 +49,10 @@ type Flow<'A> =
 /// Computation expression builder for flow.
 [<Sealed>]
 type FlowBuilder =
-    member Bind : Flow<'A> * (View<'A> -> Flow<'B>) -> Flow<'B>
-    member Return : View<'A> -> Flow<'A>
+    //member Bind : Flow<View<'A>> * (View<'A> -> Flow<'B>) -> Flow<'B>
+    //member Bind : Flow<Var<'A>> * (Var<'A> -> Flow<'B>) -> Flow<'B>
+    member Bind : Flow<'A> * ('A -> Flow<'B>) -> Flow<'B>
+    member Return : 'A -> Flow<'A>
     member ReturnFrom : Flow<'A> -> Flow<'A>
 
 /// Flow functionality.
@@ -60,19 +62,31 @@ type Flow =
     /// Mapping.
     static member Map : ('A -> 'B) -> Flow<'A> -> Flow<'B>
 
+    /// Creates a View from the result value of the flow, so that updates
+    /// can be propagated when the user navigates back and changes inputs. 
+    static member View : Flow<'A> -> Flow<View<'A>>
+
+    ///// Monadic composition: compose two flows, allowing the
+    ///// result of one to be used to determine future ones.
+    //static member BindVar : Flow<Var<'A>> -> (Var<'A> -> Flow<'B>) -> Flow<'B>
+
+    ///// Monadic composition: compose two flows, allowing the
+    ///// result of one to be used to determine future ones.
+    //static member BindView : Flow<View<'A>> -> (View<'A> -> Flow<'B>) -> Flow<'B>
+
     /// Monadic composition: compose two flows, allowing the
     /// result of one to be used to determine future ones.
-    static member Bind : Flow<'A> -> (View<'A> -> Flow<'B>) -> Flow<'B>
+    static member Bind : Flow<'A> -> ('A -> Flow<'B>) -> Flow<'B>
 
     /// Creates a flow from the given value, with an empty rendering function.
-    static member Return : View<'A> -> Flow<'A>
+    static member Return : 'A -> Flow<'A>
 
     /// Embeds a flow into a document, ignoring the result.
     static member Embed : Flow<'A> -> Doc
 
     /// Embeds a flow into a document, ignoring the result.
     /// Also adds a cancelled page from which the flow can be restarted anew.
-    static member EmbedWithCancel : (CancelledFlowActions -> Doc) -> Flow<'A> -> Doc
+    static member EmbedWithCancel : (EndedFlowActions -> Doc) -> Flow<'A> -> Doc
 
     /// Defines a flow, given a rendering function taking a continuation
     /// to invoke when the interaction is done.

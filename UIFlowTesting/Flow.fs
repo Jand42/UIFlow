@@ -10,15 +10,25 @@ type FlowActions<'A> =
     {
         back: unit -> unit
         cancel: unit -> unit
-        next: View<'A> -> unit
+        next: 'A -> unit
     }
     [<Inline>] member this.Back() = this.back()
     [<Inline>] member this.Cancel() = this.cancel()
     [<Inline>] member this.Next v = this.next v
 
+type WeakRef<'A> [<Inline "new WeakRef($x)">] (x: 'A) =
+    [<Inline "$this.deref()">] 
+    member this.Deref() = X<'A>  
+
+type NavigateFlow =
+    {
+        Get: unit -> int
+        Set: int -> unit
+    }
+
 [<JavaScript>]
 module FlowRouting =
-    let flowVars = ResizeArray<Var<int>>()
+    let flowVars = ResizeArray<WeakRef<NavigateFlow>>()
 
     let flowStateName = "WSUIFlow" + (As<string> DateTime.Now)
     let flowPrevStateName = flowStateName + "Prev"
@@ -27,11 +37,18 @@ module FlowRouting =
         let mutable st = JS.Window.History.State
         if st = null || JS.TypeOf st <> JS.Kind.Object then 
             st <- New []
-        st?(flowStateName) <- flowVars |> Seq.map (fun var -> var.Value) |> Array.ofSeq
+        st?(flowStateName) <- 
+            flowVars |> Seq.map (fun var -> 
+                let v = var.Deref()
+                if v ==. JS.Undefined then
+                    JS.Undefined
+                else
+                    v.Get()
+            ) |> Array.ofSeq
         Console.Log("Marked", st)
         JS.Window.History.ReplaceState(st, "")
 
-    let install (var: Var<int>) =
+    let install (nav: NavigateFlow) =
         if flowVars.Count = 0 then
             let handlePopState (e: Dom.Event) =
                 let st = e?state
@@ -41,14 +58,14 @@ module FlowRouting =
                         st?(flowStateName)
                     else
                         [||] : int[]
-                if flowSt <> JS.Undefined then
+                if flowSt !=. JS.Undefined then
                     flowSt |> Array.iteri (fun i p ->
-                        let varI = flowVars[i] 
-                        if varI.Value <> p then
-                            varI.Set p
+                        if i !=. JS.Undefined then
+                            let navI = flowVars[i].Deref() 
+                            navI.Set p
                     )
             JS.Window.AddEventListener("popstate", handlePopState, false)
-        flowVars.Add(var)
+        flowVars.Add(WeakRef(nav))
         flowVars.Count - 1
 
     let markPrev (index: int) =
@@ -63,7 +80,7 @@ module FlowRouting =
         let indexSt =
             if st <> null && JS.TypeOf st = JS.Kind.Object then
                 let prevSt = st?(flowPrevStateName)
-                if prevSt <> JS.Undefined then
+                if prevSt !=. JS.Undefined then
                     As<int> prevSt
                 else
                     -1
@@ -76,23 +93,25 @@ module FlowRouting =
         else
             false
 
+type FlowPage =
+    {
+        Doc : Doc
+        Validate : unit -> bool
+    }
+
 [<JavaScript>]
 type FlowState =
     {
-        Index: int
-        Pages: ResizeArray<Doc>
-        mutable EndedOn: int option
-        mutable FirstRender: bool
-        RenderFirst: unit -> unit
+        mutable Id : int
+        Index : Var<int>
+        Pages : ResizeArray<Doc>
+        mutable EndedOn : int option
+        mutable FirstRender : bool
+        RenderFirst : unit -> unit
     }
 
-    member this.CurrentPage =
-        let v = FlowRouting.flowVars[this.Index]   
-        v.Value
-
     member this.UpdatePage f =
-        let v = FlowRouting.flowVars[this.Index]   
-        v.Update f
+        this.Index.Update f
         if not this.FirstRender then
             Console.Log("PushState")
             JS.Window.History.PushState(New [], "")
@@ -114,6 +133,15 @@ type FlowState =
             0
         )
 
+    member this.Navigator =
+        {
+            Get = fun () -> this.Index.Value
+            Set =
+                fun res ->
+                    if this.Index.Value <> res then
+                        this.Index.Set res
+        }
+
     member this.End(page) =
         this.Add(page)
         let endIndex = this.Pages.Count - 1
@@ -122,8 +150,7 @@ type FlowState =
         this.EndedOn <- Some endIndex
 
     member this.Embed() =
-        let v = FlowRouting.flowVars[this.Index]
-        v.View.Map(fun i ->
+        this.Index.View.Map(fun i ->
             // do not navigate away from ending page
             match this.EndedOn with 
             | Some e -> this.Pages[e] 
@@ -145,7 +172,7 @@ type FlowState =
         )
         |> Doc.EmbedView
 
-type CancelledFlowActions =
+type EndedFlowActions =
     {
         restart: unit -> unit
     }
@@ -170,94 +197,104 @@ type Flow =
                 {
                     back = actions.Back
                     cancel = actions.Cancel
-                    next = fun x -> actions.Next (View.Map f x)
+                    next = fun x -> actions.next (f x)
                 }
             x.Render st mappedActions
         )
 
-    static member Bind (m: Flow<'A>) (k: View<'A> -> Flow<'B>) =
+    //static member BindView (m: Flow<View<'A>>) (k: View<'A> -> Flow<'B>) =
+    //    Flow(fun st actions ->
+    //        let outerActions =
+    //            {
+    //                back = actions.Back
+    //                cancel = actions.Cancel
+    //                next = fun res ->
+    //                    // check if st.Pages does not contain index i + 1
+    //                    if st.Pages.Count <= st.Index.Value + 1 then
+    //                        (k res).Render st actions
+    //                    else
+    //                        st.UpdatePage (fun i ->
+    //                            i + 1                       
+    //                        )
+    //                    FlowRouting.markPrev st.Id
+    //            }
+    //        m.Render st outerActions    
+    //    )
+
+    //static member BindVar (m: Flow<Var<'A>>) (k: Var<'A> -> Flow<'B>) =
+    //    Flow(fun st actions ->
+    //        let outerActions =
+    //            {
+    //                back = actions.Back
+    //                cancel = actions.Cancel
+    //                next = fun res ->
+    //                    // check if st.Pages does not contain index i + 1
+    //                    if st.Pages.Count <= st.Index.Value + 1 then
+    //                        (k res).Render st actions
+    //                    else
+    //                        st.UpdatePage (fun i ->
+    //                            i + 1                       
+    //                        )
+    //                    FlowRouting.markPrev st.Id
+    //            }
+    //        m.Render st outerActions    
+    //    )
+
+    static member Bind (m: Flow<'A>) (k: 'A -> Flow<'B>) =
         Flow(fun st actions ->
             let outerActions =
                 {
                     back = actions.Back
                     cancel = actions.Cancel
-                    next = fun resView ->
+                    next = fun res ->
                         // check if st.Pages does not contain index i + 1
-                        if st.Pages.Count <= st.CurrentPage + 1 then
-                            (k resView).Render st actions
+                        if st.Pages.Count <= st.Index.Value + 1 then
+                            (k res).Render st actions
                         else
                             st.UpdatePage (fun i ->
                                 i + 1                       
                             )
-                        FlowRouting.markPrev st.Index
+                        FlowRouting.markPrev st.Id
                 }
             m.Render st outerActions    
         )
 
+    static member View (f: Flow<'A>) =
+        Flow(fun st actions -> 
+            let resv = Var.Create JS.Undefined
+            let viewActions =
+                {
+                    back = actions.Back
+                    cancel = actions.Cancel
+                    next = 
+                        fun res -> 
+                            resv.Set res
+                            actions.next resv.View
+                }
+            f.Render st viewActions
+        )
+
     static member Return x =
         Flow(fun st actions -> actions.Next x)
-
-    //static member EmbedWithRouting (var: Var<int>) (fl: Flow<'A>) =
-    //    let mutable renderFirst = ignore
-    //    let st =
-    //        {
-    //            Index = FlowRouting.install var
-    //            Pages = ResizeArray [ Doc.Empty ]
-    //            EndedOn = None
-    //            RenderFirst = fun () -> renderFirst ()
-    //        }
-    //    let action =
-    //        {
-    //            back = fun () -> st.UpdatePage(fun i -> if i > 1 then i - 1 else i)
-    //            next = ignore
-    //            cancel = ignore
-    //        }
-    //    renderFirst <- fun () -> fl.Render st action
-    //    var.Set 0
-    //    st.RenderFirst()
-    //    st.Embed()
-
-    //static member EmbedWithRoutingAndCancel (var: Var<int>) (cancel: CancelledFlowActions -> Doc) (fl: Flow<'A>) =
-    //    let mutable renderFirst = ignore
-    //    let st =
-    //        {
-    //            Index = FlowRouting.install var
-    //            Pages = ResizeArray [ Doc.Empty ]
-    //            EndedOn = None
-    //            RenderFirst = fun () -> renderFirst ()
-    //        }
-    //    let mutable action = Unchecked.defaultof<FlowActions<'A>>
-    //    let cancelledAction =
-    //        {
-    //            restart = fun () -> fl.Render st action
-    //        }
-    //    action <-
-    //        {
-    //            back = fun () -> st.UpdatePage(fun i -> if i > 1 then i - 1 else i)
-    //            next = ignore
-    //            cancel = fun () -> st.Cancel (cancel cancelledAction)
-    //        }
-    //    renderFirst <- fun () -> fl.Render st action
-    //    var.Set 0
-    //    st.RenderFirst()
-    //    st.Embed()
 
     static member Embed (fl: Flow<'A>) =
         let mutable renderFirst = ignore
         let var = Var.Create 0
         let st =
             {
-                Index = FlowRouting.install var
+                Id = 0
+                Index = var
                 Pages = ResizeArray [ Doc.Empty ]
                 EndedOn = None
                 FirstRender = true
                 RenderFirst = fun () -> renderFirst ()
             }
+        st.Id <- FlowRouting.install st.Navigator
         let action =
             {
                 back =
                     fun () -> 
-                        if not (FlowRouting.tryBack st.Index) then
+                        if not (FlowRouting.tryBack st.Id) then
                             st.UpdatePage(fun i -> if i > 1 then i - 1 else i)
                 next = ignore
                 cancel = ignore
@@ -270,17 +307,19 @@ type Flow =
         st.RenderFirst()
         st.Embed()
 
-    static member EmbedWithCancel (cancel: CancelledFlowActions -> Doc) (fl: Flow<'A>) =
+    static member EmbedWithCancel (cancel: EndedFlowActions -> Doc) (fl: Flow<'A>) =
         let mutable renderFirst = ignore
         let var = Var.Create 0
         let st =
             {
-                Index = FlowRouting.install var
+                Id = 0
+                Index = var
                 Pages = ResizeArray [ Doc.Empty ]
                 EndedOn = None
                 FirstRender = true
                 RenderFirst = fun () -> renderFirst ()
             }
+        st.Id <- FlowRouting.install st.Navigator
         let mutable action = Unchecked.defaultof<FlowActions<'A>>
         let cancelledAction =
             {
@@ -293,7 +332,7 @@ type Flow =
             {
                 back =
                     fun () -> 
-                        if not (FlowRouting.tryBack st.Index) then
+                        if not (FlowRouting.tryBack st.Id) then
                             st.UpdatePage(fun i -> if i > 1 then i - 1 else i)
                 next = ignore
                 cancel = fun () -> st.Cancel (cancel cancelledAction)
@@ -311,12 +350,17 @@ type Flow =
         Flow(f)
 
     static member End doc : Flow<unit> =
-        Flow(fun st actions -> st.End doc)
+        Flow(fun st _ -> st.End doc)
+
+    //static member EndRestartable (f: EndedFlowActions -> Doc) : Flow<unit> =
+    //    Flow(fun st _ -> st.End doc)
 
 [<JavaScript>]
 [<Sealed>]
 type FlowBuilder() =
-    [<Inline>] member x.Bind(comp, func) = Flow.Bind comp func
+    //[<Inline>] member x.Bind(comp: Flow<Var<'A>>, func: Var<'A> -> Flow<'B>) = Flow.BindVar comp func
+    //[<Inline>] member x.Bind(comp: Flow<View<'A>>, func: View<'A> -> Flow<'B>) = Flow.BindView comp func
+    [<Inline>] member x.Bind(comp: Flow<'A>, func: 'A -> Flow<'B>) = Flow.Bind comp func
     [<Inline>] member x.Return(value) = Flow.Return value
     [<Inline>] member x.ReturnFrom(inner: Flow<'A>) = inner
 
@@ -334,14 +378,14 @@ type FlowExtensions =
     static member Map(flow: Flow<'A>, f: Func<'A, 'B>) =
         Flow.Map f.Invoke flow
 
-    [<Extension; Inline>]
-    static member Bind(flow: Flow<'A>, f: Func<View<'A>, Flow<'B>>) =
-        Flow.Bind flow f.Invoke
+    //[<Extension; Inline>]
+    //static member Bind(flow: Flow<'A>, f: Func<View<'A>, Flow<'B>>) =
+    //    Flow.Bind(flow, f.Invoke)
 
     [<Extension; Inline>]
     static member Embed(flow) =
         Flow.Embed flow
 
     [<Extension; Inline>]
-    static member EmbedWithCancel(flow, cancel: Func<CancelledFlowActions, Doc>) =
+    static member EmbedWithCancel(flow, cancel: Func<EndedFlowActions, Doc>) =
         Flow.EmbedWithCancel cancel.Invoke flow
