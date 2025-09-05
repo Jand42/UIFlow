@@ -105,6 +105,62 @@ module Client =
     //    )
     //    |> Doc.RunById "main"
 
+
+    //let Stage1 (actions: FlowActions<_>) =
+    //    let nameVar = Var.Create ""
+    //    div [] [
+    //        p [] [ 
+    //            text "Name: " 
+    //            Doc.InputType.Text [] nameVar
+    //        ]
+    //        p [] [
+    //            Doc.Button "Next" [ attr.style "margin-right: 0.5em" ] (fun () -> 
+    //                if nameVar.Value = "" then
+    //                    JS.Alert "Please provide a name"
+    //                else
+    //                    actions.Next nameVar.Value
+    //            )
+    //            Doc.Button "Cancel" [] actions.Cancel
+    //        ]
+    //    ]
+
+    //let Stage2 (actions: FlowActions<_>) =
+    //    let ageVar = Var.Create (CheckedInput.Make 1)
+    //    div [] [
+    //        p [] [ 
+    //            text "Age: " 
+    //            Doc.InputType.Int [] ageVar
+    //        ]
+    //        p [] [
+    //            Doc.Button "Back" [ attr.style "margin-right: 0.5em" ] actions.Back
+    //            Doc.Button "Submit" [ attr.style "margin-right: 0.5em" ] (fun () -> 
+    //                match ageVar.Value with
+    //                | Valid (a, _) ->
+    //                    if 0 <= a && a <= 99 then
+    //                        actions.Next a
+    //                    else
+    //                        JS.Alert "Please provide and age between 0 and 99"
+    //                | _ -> 
+    //                    JS.Alert "Please enter a valid number"
+    //            )
+    //            Doc.Button "Cancel" [] actions.Cancel
+    //        ]
+    //    ]
+
+    //let StageEnd (name: View<string>) (age: View<int>) =
+    //    div [] [
+    //        p [] [ 
+    //            text $"Hello {name.V}, age {age.V}" 
+    //        ]
+    //    ]
+
+    //let CombinedFlow() =
+    //    flow {
+    //        let! name = Flow.Define Stage1 |> Flow.View
+    //        let! age = Flow.Define Stage2 |> Flow.View
+    //        return! Flow.End (StageEnd name age)
+    //    }
+
     let Stage1 (actions: FlowActions<_>) =
         let nameVar = Var.Create ""
         div [] [
@@ -117,7 +173,7 @@ module Client =
                     if nameVar.Value = "" then
                         JS.Alert "Please provide a name"
                     else
-                        actions.Next nameVar.Value
+                        actions.Next nameVar.View
                 )
                 Doc.Button "Cancel" [] actions.Cancel
             ]
@@ -133,14 +189,15 @@ module Client =
             p [] [
                 Doc.Button "Back" [ attr.style "margin-right: 0.5em" ] actions.Back
                 Doc.Button "Submit" [ attr.style "margin-right: 0.5em" ] (fun () -> 
-                    match ageVar.Value with
-                    | Valid (a, _) ->
-                        if 0 <= a && a <= 99 then
-                            actions.Next a
-                        else
-                            JS.Alert "Please provide and age between 0 and 99"
-                    | _ -> 
-                        JS.Alert "Please enter a valid number"
+                    actions.Next ageVar.View
+                    //match ageVar.Value with
+                    //| Valid (a, _) ->
+                    //    if 0 <= a && a <= 99 then
+                    //        actions.Next a
+                    //    else
+                    //        JS.Alert "Please provide and age between 0 and 99"
+                    //| _ -> 
+                    //    JS.Alert "Please enter a valid number"
                 )
                 Doc.Button "Cancel" [] actions.Cancel
             ]
@@ -155,12 +212,26 @@ module Client =
 
     let CombinedFlow() =
         flow {
-            let! name = Flow.Define Stage1 |> Flow.View
-            let! age = Flow.Define Stage2 |> Flow.View
+            let! name = Flow.Define Stage1 |> Flow.ValidateView (fun x -> x <> "")
+            let! age = 
+                Flow.Define Stage2 
+                |> Flow.ValidateView (
+                    function
+                    | Valid (a, _) ->
+                        if 0 <= a && a <= 99 then
+                            true
+                        else
+                            JS.Alert "Please provide and age between 0 and 99"
+                            false
+                    | _ -> 
+                        JS.Alert "Please enter a valid number"
+                        false
+                )
+                |> Flow.Map (View.Map (function Valid (a, _) -> a | _ -> 0))
             return! Flow.End (StageEnd name age)
         }
 
-    let Cancelled (actions: CancelledFlowActions) =
+    let Cancelled (actions: EndedFlowActions) =
         div [] [
             p [] [ text "Canceled" ]
             p [] [ Doc.Button "Restart" [] actions.Restart ]

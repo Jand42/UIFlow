@@ -62,6 +62,12 @@ type Flow =
     /// Mapping.
     static member Map : ('A -> 'B) -> Flow<'A> -> Flow<'B>
 
+    /// Adds a validator function to a flow passing forward a View.
+    static member ValidateView : ('A -> bool) -> Flow<View<'A>> -> Flow<View<'A>>
+
+    /// Adds a validator function to a flow passing forward a Var.
+    static member ValidateVar : ('A -> bool) -> Flow<Var<'A>> -> Flow<Var<'A>>
+
     /// Creates a View from the result value of the flow, so that updates
     /// can be propagated when the user navigates back and changes inputs. 
     static member View : Flow<'A> -> Flow<View<'A>>

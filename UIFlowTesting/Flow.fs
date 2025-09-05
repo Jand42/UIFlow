@@ -60,8 +60,9 @@ module FlowRouting =
                         [||] : int[]
                 if flowSt !=. JS.Undefined then
                     flowSt |> Array.iteri (fun i p ->
-                        if i !=. JS.Undefined then
+                        if i !=. JS.Undefined && i < flowVars.Count then
                             let navI = flowVars[i].Deref() 
+                            Console.Log("navI", i, navI)
                             navI.Set p
                     )
             JS.Window.AddEventListener("popstate", handlePopState, false)
@@ -96,15 +97,22 @@ module FlowRouting =
 type FlowPage =
     {
         Doc : Doc
-        Validate : unit -> bool
+        mutable GoNext : (unit -> unit) -> unit
     }
+
+    [<JavaScript>]
+    static member Create doc =
+        {
+            Doc = doc
+            GoNext = ignore
+        }
 
 [<JavaScript>]
 type FlowState =
     {
         mutable Id : int
         Index : Var<int>
-        Pages : ResizeArray<Doc>
+        Pages : ResizeArray<FlowPage>
         mutable EndedOn : int option
         mutable FirstRender : bool
         RenderFirst : unit -> unit
@@ -128,7 +136,7 @@ type FlowState =
     member this.Cancel(page) =
         this.UpdatePage(fun _ ->
             this.Pages.Clear()
-            this.Pages.Add(page)
+            this.Pages.Add(FlowPage.Create page)
             this.EndedOn <- Some 0
             0
         )
@@ -137,27 +145,36 @@ type FlowState =
         {
             Get = fun () -> this.Index.Value
             Set =
-                fun res ->
-                    if this.Index.Value <> res then
-                        this.Index.Set res
+                fun newI ->
+                    let curI = this.Index.Value
+                    if curI > newI then
+                        this.Index.Set newI
+                    elif curI < newI then
+                        let mutable final = curI
+                        let rec goNext i =
+                            final <- i
+                            if i < newI then
+                                this.Pages[i].GoNext (fun () -> goNext (i + 1))
+                        goNext curI 
+                        this.Index.Set final
         }
 
     member this.End(page) =
-        this.Add(page)
+        this.Add(FlowPage.Create page)
         let endIndex = this.Pages.Count - 1
         for i = 0 to endIndex - 1 do
-            this.Pages[i] <- Doc.Empty
+            this.Pages[i] <- FlowPage.Create Doc.Empty
         this.EndedOn <- Some endIndex
 
     member this.Embed() =
         this.Index.View.Map(fun i ->
             // do not navigate away from ending page
             match this.EndedOn with 
-            | Some e -> this.Pages[e] 
+            | Some e -> this.Pages[e].Doc 
             | _ ->
                 // check if st.Pages contains index i
                 if this.Pages.Count >= i + 1 then
-                    this.Pages[i]
+                    this.Pages[i].Doc
                 elif this.Pages.Count > 1 then
                     // move to last rendered page instead
                     this.UpdatePage(fun _ -> this.Pages.Count - 1)
@@ -165,7 +182,7 @@ type FlowState =
                 else
                     this.EndedOn <- None
                     this.Pages.Clear()
-                    this.Pages.Add(Doc.Empty)
+                    this.Pages.Add(FlowPage.Create Doc.Empty)
                     this.UpdatePage(fun _ -> 0)
                     this.RenderFirst()
                     Doc.Empty
@@ -183,7 +200,7 @@ type EndedFlowActions =
 type Flow<'A>(render: FlowState -> FlowActions<'A> -> unit) =
         
     new (define: Func<FlowActions<'A>, Doc>) =
-        Flow(fun st actions -> st.Add (define.Invoke actions))
+        Flow(fun st actions -> st.Add (FlowPage.Create (define.Invoke actions)))
 
     [<Inline>] member this.Render = render
 
@@ -200,6 +217,44 @@ type Flow =
                     next = fun x -> actions.next (f x)
                 }
             x.Render st mappedActions
+        )
+
+    static member ValidateView (pred: 'A -> bool) (x: Flow<View<'A>>) =
+        Flow(fun st actions -> 
+            let validatedActions =
+                {
+                    back = actions.Back
+                    cancel = actions.Cancel
+                    next = 
+                        fun (resv: View<'A>) -> 
+                            let p = st.Pages[st.Index.Value]
+                            p.GoNext <- 
+                                fun cont ->
+                                    resv |> View.Get (fun res ->
+                                        if pred res then
+                                            cont()
+                                    )
+                            p.GoNext (fun () -> actions.next resv)
+                }
+            x.Render st validatedActions
+        )
+
+    static member ValidateVar (pred: 'A -> bool) (x: Flow<Var<'A>>) =
+        Flow(fun st actions -> 
+            let validatedActions =
+                {
+                    back = actions.Back
+                    cancel = actions.Cancel
+                    next = 
+                        fun (resv: Var<'A>) -> 
+                            let p = st.Pages[st.Index.Value]
+                            p.GoNext <- 
+                                fun cont ->
+                                    if pred resv.Value then
+                                        cont()
+                            p.GoNext (fun () -> actions.next resv)
+                }
+            x.Render st validatedActions
         )
 
     //static member BindView (m: Flow<View<'A>>) (k: View<'A> -> Flow<'B>) =
@@ -284,7 +339,7 @@ type Flow =
             {
                 Id = 0
                 Index = var
-                Pages = ResizeArray [ Doc.Empty ]
+                Pages = ResizeArray [ FlowPage.Create Doc.Empty ]
                 EndedOn = None
                 FirstRender = true
                 RenderFirst = fun () -> renderFirst ()
@@ -314,7 +369,7 @@ type Flow =
             {
                 Id = 0
                 Index = var
-                Pages = ResizeArray [ Doc.Empty ]
+                Pages = ResizeArray [ FlowPage.Create Doc.Empty ]
                 EndedOn = None
                 FirstRender = true
                 RenderFirst = fun () -> renderFirst ()
@@ -378,9 +433,9 @@ type FlowExtensions =
     static member Map(flow: Flow<'A>, f: Func<'A, 'B>) =
         Flow.Map f.Invoke flow
 
-    //[<Extension; Inline>]
-    //static member Bind(flow: Flow<'A>, f: Func<View<'A>, Flow<'B>>) =
-    //    Flow.Bind(flow, f.Invoke)
+    [<Extension; Inline>]
+    static member Bind(flow: Flow<'A>, f: Func<'A, Flow<'B>>) =
+        Flow.Bind flow f.Invoke
 
     [<Extension; Inline>]
     static member Embed(flow) =
